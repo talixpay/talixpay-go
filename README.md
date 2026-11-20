@@ -21,6 +21,5 @@ ok := talixpay.VerifyWebhook(rawBody, webhookSecret, r.Header.Get("X-Signature")
 ```
 
 ```bash
-go get github.com/talixpay/talixpay-go@latest
-# or replace in go.mod to this monorepo path during development
+go get github.com/talixpay/talixpay-go@v0.1.0
 ```

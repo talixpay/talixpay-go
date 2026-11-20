@@ -36,9 +36,21 @@ type CreatePaymentInput struct {
 	ExternalID    string  `json:"external_id,omitempty"`
 	CustomerID    string  `json:"customer_id,omitempty"`
 	PaymentMethod string  `json:"payment_method,omitempty"`
+	CryptoMethod  string  `json:"crypto_method,omitempty"`
 	CallbackURL   string  `json:"callback_url,omitempty"`
 	RedirectURL   string  `json:"redirect_url,omitempty"`
 	CancelURL     string  `json:"cancel_url,omitempty"`
+}
+
+type CryptoCoinInfo struct {
+	ID                string  `json:"id"`
+	Currency          string  `json:"currency"`
+	Name              string  `json:"name,omitempty"`
+	Network           string  `json:"network,omitempty"`
+	NetworkLabel      string  `json:"network_label,omitempty"`
+	Available         bool    `json:"available"`
+	MinAmountUSD      float64 `json:"min_amount_usd,omitempty"`
+	UnavailableReason string  `json:"unavailable_reason,omitempty"`
 }
 
 type PaymentCreated struct {
@@ -62,6 +74,7 @@ type PaymentMethodInfo struct {
 	Channel   string   `json:"channel"`
 	Enabled   bool     `json:"enabled"`
 	MinAmount float64  `json:"min_amount,omitempty"`
+	CoinsURL  string   `json:"coins_url,omitempty"`
 }
 
 type CreateCashierSessionInput struct {
@@ -156,6 +169,25 @@ func (c *Client) ListPaymentMethods(ctx context.Context) ([]PaymentMethodInfo, e
 		return nil, err
 	}
 	return out.Methods, nil
+}
+
+func (c *Client) ListCryptoMethods(ctx context.Context) ([]CryptoCoinInfo, error) {
+	var out struct {
+		Methods []CryptoCoinInfo `json:"methods"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/crypto/methods", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Methods, nil
+}
+
+func (c *Client) SelectPaymentMethod(ctx context.Context, orderID, method string) (json.RawMessage, error) {
+	var out json.RawMessage
+	body := map[string]string{"method": method}
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/payments/"+orderID+"/select-method", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *Client) CreateCashierSession(ctx context.Context, in CreateCashierSessionInput) (*CashierSession, error) {
