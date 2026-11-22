@@ -103,7 +103,7 @@ type CashierSession struct {
 	PayoutID     string    `json:"payout_id,omitempty"`
 }
 
-func (c *Client) doJSON(ctx context.Context, method, path string, in any, out any) error {
+func (c *Client) doJSON(ctx context.Context, method, path string, in any, out any, headers ...map[string]string) error {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -119,6 +119,13 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in any, out an
 	req.Header.Set("X-API-Key", c.APIKey)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for _, h := range headers {
+		for k, v := range h {
+			if strings.TrimSpace(v) != "" {
+				req.Header.Set(k, v)
+			}
+		}
 	}
 	res, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -145,9 +152,17 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in any, out an
 	return json.Unmarshal(raw, out)
 }
 
-func (c *Client) CreatePayment(ctx context.Context, in CreatePaymentInput) (*PaymentCreated, error) {
+type CreatePaymentOpts struct {
+	IdempotencyKey string
+}
+
+func (c *Client) CreatePayment(ctx context.Context, in CreatePaymentInput, opts ...CreatePaymentOpts) (*PaymentCreated, error) {
 	var out PaymentCreated
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/payments", in, &out); err != nil {
+	headers := map[string]string{}
+	if len(opts) > 0 && strings.TrimSpace(opts[0].IdempotencyKey) != "" {
+		headers["Idempotency-Key"] = strings.TrimSpace(opts[0].IdempotencyKey)
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/payments", in, &out, headers); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -156,6 +171,135 @@ func (c *Client) CreatePayment(ctx context.Context, in CreatePaymentInput) (*Pay
 func (c *Client) GetPayment(ctx context.Context, orderID string) (json.RawMessage, error) {
 	var out json.RawMessage
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/payments/"+orderID, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetPaymentByExternalID(ctx context.Context, externalID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/payments/by-external/"+externalID, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type ListPaymentsQuery struct {
+	Status     string
+	CustomerID string
+	ExternalID string
+	Period     string
+	Page       int
+	Limit      int
+}
+
+func (c *Client) ListPayments(ctx context.Context, q ListPaymentsQuery) (json.RawMessage, error) {
+	params := []string{}
+	if q.Status != "" {
+		params = append(params, "status="+q.Status)
+	}
+	if q.CustomerID != "" {
+		params = append(params, "customer_id="+q.CustomerID)
+	}
+	if q.ExternalID != "" {
+		params = append(params, "external_id="+q.ExternalID)
+	}
+	if q.Period != "" {
+		params = append(params, "period="+q.Period)
+	}
+	if q.Page > 0 {
+		params = append(params, fmt.Sprintf("page=%d", q.Page))
+	}
+	if q.Limit > 0 {
+		params = append(params, fmt.Sprintf("limit=%d", q.Limit))
+	}
+	path := "/v1/payments"
+	if len(params) > 0 {
+		path += "?" + strings.Join(params, "&")
+	}
+	var out json.RawMessage
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) CancelPayment(ctx context.Context, orderID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	// POST with empty JSON body keeps Content-Type consistent across gateways.
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/payments/"+orderID+"/cancel", map[string]any{}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type RefundPaymentInput struct {
+	Destination string `json:"destination,omitempty"`
+}
+
+func (c *Client) RefundPayment(ctx context.Context, orderID string, in RefundPaymentInput) (json.RawMessage, error) {
+	var out json.RawMessage
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/payments/"+orderID+"/refund", in, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type FundInfo struct {
+	Address           string  `json:"address"`
+	Balance           float64 `json:"balance"`
+	BalanceAvailable  float64 `json:"balance_available"`
+	PendingLockedUSDT float64 `json:"pending_locked_usdt"`
+	OpenWithdrawals   int     `json:"open_withdrawals"`
+	Status            string  `json:"status"`
+	Network           string  `json:"network"`
+	Asset             string  `json:"asset"`
+	Note              string  `json:"note,omitempty"`
+}
+
+type FundPayoutMethod struct {
+	ID        string  `json:"id"`
+	BuyAsset  string  `json:"buy_asset,omitempty"`
+	MinUSD    float64 `json:"min_usd,omitempty"`
+	Available bool    `json:"available"`
+}
+
+type CreateFundPayoutInput struct {
+	ExternalID    string  `json:"external_id"`
+	AmountUSD     float64 `json:"amount_usd"`
+	PaymentMethod string  `json:"payment_method"`
+	Destination   string  `json:"destination"`
+}
+
+func (c *Client) GetFund(ctx context.Context) (*FundInfo, error) {
+	var out FundInfo
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/fund", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ListFundPayoutMethods(ctx context.Context) ([]FundPayoutMethod, error) {
+	var out struct {
+		Methods []FundPayoutMethod `json:"methods"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/fund-payout-methods", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Methods, nil
+}
+
+func (c *Client) CreateFundPayout(ctx context.Context, in CreateFundPayoutInput) (json.RawMessage, error) {
+	var out json.RawMessage
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/fund-payouts", in, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) GetFundPayout(ctx context.Context, idOrExternalID string) (json.RawMessage, error) {
+	var out json.RawMessage
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/fund-payouts/"+idOrExternalID, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
